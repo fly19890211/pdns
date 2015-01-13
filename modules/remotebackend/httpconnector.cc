@@ -349,18 +349,44 @@ int HTTPConnector::recv_message(rapidjson::Document &output) {
     if (d_socket == NULL ) return -1; // cannot receive :(
     char buffer[4096];
     int rd = -1;
+    bool fail = false;
+    time_t t0;
 
     arl.initialize(&resp);
 
-    while(arl.ready() == false) {
-       rd = d_socket->readWithTimeout(buffer, sizeof(buffer), timeout);
-       if (rd<0) {
-         delete d_socket;
-         d_socket = NULL;
-         return -1;
-       }
-       buffer[rd] = 0;
-       arl.feed(std::string(buffer, rd));
+    try {
+      t0 = time((time_t*)NULL);
+      while(arl.ready() == false && (labs(time((time_t*)NULL) - t0) <= timeout/1000)) {
+        rd = d_socket->readWithTimeout(buffer, sizeof(buffer), timeout);
+        if (rd<0) {
+          delete d_socket;
+          d_socket = NULL;
+          fail = true;
+          break;
+        }
+        buffer[rd] = 0;
+        arl.feed(std::string(buffer, rd));
+      }
+      // timeout occured.
+      if (arl.ready() == false) {
+        L<<Logger::Error<<"While reading from HTTP endpoint "<<d_addr.toStringWithPort()<<": timeout"<<std::endl;
+        delete d_socket;
+        d_socket = NULL;
+        fail = true;
+      }     
+    } catch (NetworkError &ne) {
+      L<<Logger::Error<<"While reading from HTTP endpoint "<<d_addr.toStringWithPort()<<": "<<ne.what()<<std::endl; 
+      delete d_socket;
+      d_socket = NULL;
+      fail = true;
+    } catch (...) {
+      L<<Logger::Error<<"While reading from HTTP endpoint "<<d_addr.toStringWithPort()<<": exception caught"<<std::endl;
+      delete d_socket;
+      fail = true;
+    }
+
+    if (fail) {
+      return -1;
     }
 
     arl.finalize();
